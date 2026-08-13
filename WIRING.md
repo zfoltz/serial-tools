@@ -1,0 +1,148 @@
+# Wiring a passive RS232 tap
+
+## The one thing that decides everything
+
+A serial port has **one** receive line. One USB-to-RS232 adapter can therefore
+listen to **one direction only**. To capture both PLC output and PLC input at
+the same time you need **two adapters**. Buy a second Oikwan (they're ~$10) —
+there is no clever wiring that gets both directions onto one adapter without
+losing the ability to tell who said what.
+
+With the one adapter you have now you can still capture one direction at a
+time, which is often enough to work out the protocol.
+
+## DB9 pinout of your adapter
+
+The Oikwan adapter is a DB9 **male**, wired as **DTE** (same as a PC serial
+port). Only three pins matter:
+
+| Pin | Signal | Direction on your adapter | Use in the tap |
+|-----|--------|---------------------------|----------------|
+| 2   | RXD    | **input**                 | connect to the line you want to watch |
+| 3   | TXD    | output                    | **leave disconnected** |
+| 5   | GND    | signal ground             | connect to the link's ground |
+
+Pin 3 must stay unconnected. If your adapter's transmitter reaches the link it
+will fight the real driver, and you'll corrupt the traffic you're trying to
+observe. Pins 1, 4, 6, 7, 8, 9 stay unconnected too.
+
+## Which wire carries which direction
+
+The cable between the PLC and the device has two data conductors. One is
+driven by the PLC, one is driven by the device. On a DB9 port, pin 3 is TXD
+and pin 2 is RXD *by name* on both ends, but the direction reverses depending
+on whether the port is DTE or DCE:
+
+- **DTE port** (PLC programming ports, PCs): pin 3 = output, pin 2 = input
+- **DCE port** (many modems, scales, printers, drives): pin 3 = input, pin 2 = output
+
+So don't assume pin 3. Identify the driven conductor empirically:
+
+1. Unplug the cable at the **device** end, leaving the PLC powered and running.
+2. With a DMM, measure each data conductor against pin 5 (ground).
+3. The conductor sitting at **−5 V to −12 V** is being driven by the PLC — that
+   is the **PLC output** line. (Idle RS232 is the mark state, a negative voltage.)
+4. The other conductor floats near **0 V** — that is the **PLC input** line,
+   normally driven by the device.
+
+Repeat at the PLC end if you want to confirm the device side the same way.
+
+If you can't unplug anything, tap one line, watch the traffic, and infer it
+from the pattern: in almost every PLC protocol the PLC is the master and sends
+the short, regularly repeating query; the device replies with the longer,
+variable frame.
+
+## Making the tap without cutting the cable
+
+Best option is an inline **DB9 male-to-female screw-terminal breakout board**
+(~$8). Plug it into the existing link so the PLC↔device connection passes
+through untouched, then run jumper wires from the terminals to your adapters.
+
+**Do not use a plain DB9 Y-splitter.** It parallels *all* pins, including
+pin 3, which puts your adapter's transmitter on the bus. If a Y-splitter is
+all you have, physically remove or insulate pin 3 on the splitter leg going
+to the adapter.
+
+## Final connections
+
+```
+                 PLC output conductor
+  PLC  ─────┬────────────────────────────────┬───── DEVICE
+            │                                │
+            │        PLC input conductor     │
+       ─────┼────────────────────────────────┼─────
+            │        signal ground (pin 5)   │
+       ─────┼───────────────┬────────────────┼─────
+            │               │
+        pin 2│           pin 5               │pin 2 ... pin 5
+      ┌──────┴──────┐   (both)         ┌─────┴───────┐
+      │  ADAPTER A  │──────────────────│  ADAPTER B  │
+      │  "PLC>DEV"  │                  │  "DEV>PLC"  │
+      │  pin 3 n/c  │                  │  pin 3 n/c  │
+      └─────────────┘                  └─────────────┘
+```
+
+**Adapter A — captures PLC output**
+- A pin 2 ← PLC output conductor
+- A pin 5 ← link signal ground
+- A pin 3 → no connection
+
+**Adapter B — captures PLC input**
+- B pin 2 ← PLC input conductor (the device's output)
+- B pin 5 ← same link signal ground
+- B pin 3 → no connection
+
+## Cautions
+
+**Ground loops.** You are bonding your laptop's ground to the link's signal
+ground. If the PLC and your laptop sit on different earth references, current
+can flow through that wire. Run the laptop on battery, or use a USB isolator.
+Connect ground at exactly one point — don't ground both adapters separately to
+different places on the machine.
+
+**Loading.** An RS232 receiver is 3–7 kΩ. Adding a second one in parallel
+roughly halves the load, which is still inside what a compliant driver must
+handle. It's safe at normal baud rates. If the link is long or already
+marginal, keep the tap stubs short.
+
+**Hardware flow control.** If the link uses RTS/CTS you're only tapping the
+data lines, so you'll see the data but not the handshake. The script disables
+flow control on the adapters so it never blocks waiting for CTS.
+
+**Live equipment.** Wiring into a running control system can drop the link if
+you short two conductors. Do it on a machine that's safe to stop.
+
+## Then run it
+
+Just run it with no arguments. It finds the adapters and works out the baud
+rate, data bits and parity by itself:
+
+```powershell
+python rs232_tap.py
+```
+
+It sweeps 48 combinations (8 baud rates × 6 framings), listening 2 seconds at
+each, and locks on when at least 95% of the bytes decode as printable ASCII.
+If a full sweep finds nothing it starts over, because a PLC that polls every
+few seconds can easily stay silent through an otherwise-correct candidate.
+**Traffic has to be flowing while it detects** — trigger whatever makes the
+PLC talk.
+
+A full sweep takes about 90 seconds per port in the worst case, but common
+settings are tried first so it usually locks within the first few tries.
+
+Useful variations:
+
+```powershell
+python rs232_tap.py --list                                 # just show the ports
+python rs232_tap.py --detect-only                          # find the settings, don't capture
+python rs232_tap.py -p COM3 -p COM4                        # auto baud, but only these ports
+python rs232_tap.py -p COM3=PLC-OUT -p COM4=PLC-IN -b 9600 # skip detection entirely
+python rs232_tap.py --binary                               # link isn't ASCII
+python rs232_tap.py --detect-seconds 5                     # slow poller
+```
+
+Two notes. Detection assumes ASCII; if the link is a binary protocol like
+Modbus RTU, pass `--binary` to switch to an entropy-based score. And avoid `>`
+inside a label — PowerShell treats it as output redirection unless you quote
+the whole argument.
