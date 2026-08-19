@@ -1,4 +1,4 @@
-# Wiring a passive RS232 tap
+# Wiring a passive serial tap (RS232 and RS485)
 
 ## The one thing that decides everything
 
@@ -112,13 +112,67 @@ flow control on the adapters so it never blocks waiting for CTS.
 **Live equipment.** Wiring into a running control system can drop the link if
 you short two conductors. Do it on a machine that's safe to stop.
 
+## The tap dongle (build once, then tapping is plug-in)
+
+When the link passes through DB9 connectors, skip the terminal work entirely.
+Build this once from the inline M/F breakout board and two female breakouts:
+
+1. **Inline board** (DB9 male one end, female the other, screw terminals in
+   the middle): drops into the existing PLC-to-device connection; everything
+   passes through, every conductor is now on a screw terminal.
+2. **Monitor port A** (female breakout, plugs onto adapter #1): wire from the
+   inline board's **pin 3** terminal to the monitor breakout's **pin 2**, and
+   inline **pin 5** to monitor **pin 5**.
+3. **Monitor port B** (female breakout, plugs onto adapter #2): inline
+   **pin 2** to monitor **pin 2**, inline **pin 5** to monitor **pin 5**.
+4. **Nothing lands on pin 3 of either monitor breakout — ever.** That is the
+   adapter's transmitter; connecting it drives the live line. (This is also
+   why an off-the-shelf DB9 Y-splitter can't be used: it parallels all pins,
+   pin 3 included.)
+
+Label the pigtails direction-neutrally (`LINE-PIN3`, `LINE-PIN2`): which side
+is the PLC depends on whether the PLC port is DTE and whether the cable is
+straight-through. Both monitor ports are receive-only, so a wrong guess just
+swaps the labels — rename them in software, nothing is miswired.
+
+## Tapping screw terminals without unlanding wires
+
+Use the back-probe pins: slide a pin down alongside the conductor into the
+terminal's clamp (or spear the exposed screw head) and connect the banana end
+to the adapter pigtail. Mini-grabber hooks work on screw heads and breakout
+pins; insulation-piercing clips are the last resort (they leave a pinhole).
+Never unland a conductor on a live machine just to add a tap wire.
+
+## Tapping RS485
+
+**2-wire half-duplex (most common):** both directions share one A/B pair, so
+**one** RS485 adapter sees everything. Wire adapter A(+/D+) to bus A, B(-/D-)
+to bus B, GND to bus common if the link has one. Direction is inferred in
+software:
+
+```powershell
+serialtools tap -p COM5 --wiring rs485-2w --decoder modbus_rtu
+```
+
+Do **not** enable the adapter's termination resistor (the bus is already
+terminated at both ends) and keep the stub short. The tap never transmits, so
+the adapter's driver stays off the bus automatically.
+
+If A/B polarity is guessed wrong you get framing garbage, not damage — swap
+the two wires. Modbus RTU frames want a tighter gap: `--gap 4` at 9600,
+`--gap 2` at 19200+.
+
+**4-wire full duplex (RS422-style):** two pairs, one driven by each side —
+exactly like RS232. Two adapters, one listening across each pair (RX+ to the
+pair's +, RX- to the pair's -), `--wiring rs485-4w`, labels per direction.
+
 ## Then run it
 
 Just run it with no arguments. It finds the adapters and works out the baud
 rate, data bits and parity by itself:
 
 ```powershell
-python rs232_tap.py
+serialtools tap        # or: python rs232_tap.py (same thing)
 ```
 
 It sweeps 48 combinations (8 baud rates × 6 framings), listening 2 seconds at
@@ -134,12 +188,13 @@ settings are tried first so it usually locks within the first few tries.
 Useful variations:
 
 ```powershell
-python rs232_tap.py --list                                 # just show the ports
-python rs232_tap.py --detect-only                          # find the settings, don't capture
-python rs232_tap.py -p COM3 -p COM4                        # auto baud, but only these ports
-python rs232_tap.py -p COM3=PLC-OUT -p COM4=PLC-IN -b 9600 # skip detection entirely
-python rs232_tap.py --binary                               # link isn't ASCII
-python rs232_tap.py --detect-seconds 5                     # slow poller
+serialtools list                                          # just show the ports
+serialtools tap --detect-only                             # find the settings, don't capture
+serialtools tap -p COM3 -p COM4                           # auto baud, but only these ports
+serialtools tap -p COM3=PLC-OUT -p COM4=PLC-IN -b 9600    # skip detection entirely
+serialtools tap --binary                                  # link isn't ASCII
+serialtools tap --detect-seconds 5                        # slow poller
+serialtools tap --profile vici --live                     # live decode + status header
 ```
 
 Two notes. Detection assumes ASCII; if the link is a binary protocol like

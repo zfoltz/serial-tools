@@ -1,0 +1,28 @@
+# VICI EC/EUH-style multiposition valve actuator, RS232 9600 8N1.
+# Commands terminate with CR from a terminal; the PLC's PRTXT sends CR LF.
+
+[device]
+name = "VICI actuator"
+
+[framing]
+terminator = "CR"
+
+[checksum]
+type = "none"
+
+[commands]
+VR = "query firmware version"
+CP = "query current position"
+NP = "query number of positions"
+ID = "query device id"
+AM = "query actuator mode"
+GO = { pattern = 'GO(?P<pos>\d{1,2})', desc = "go to position" }
+CW = { pattern = 'CW(?P<pos>\d{1,2})?', desc = "move clockwise" }
+CC = { pattern = 'CC(?P<pos>\d{1,2})?', desc = "move counterclockwise" }
+HM = "home"
+
+[responses]
+position = 'CP(?P<pos>\d+)'
+positions = 'NP(?P<count>\d+)'
+version = '(?P<version>\d{6,}|Version.+)'
+error = '(?P<err>E\d+|\?.*|Bad command.*)'
