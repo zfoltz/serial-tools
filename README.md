@@ -51,6 +51,7 @@ serialtools replay <capture> --port COM20     play a capture onto a port
 serialtools sim <capture|profile> --port COMx answer requests like the device did
 serialtools term --port COMx [--profile ...]  interactive terminal
 serialtools mcp [--allow-tx]                  MCP server (stdio)
+python serve_feed.py [--port 8686]            read-only web view of the live tap
 ```
 
 `python rs232_tap.py` still works — it's a shim for `serialtools tap`.
@@ -58,6 +59,25 @@ serialtools mcp [--allow-tx]                  MCP server (stdio)
 Every capture becomes a directory under `captures/`: `session.json` (metadata,
 notes), `frames.jsonl` (raw, never rewritten), `decoded.jsonl`, `raw/*.bin`,
 `tap.log`. Old rs232_tap JSONL logs still load.
+
+## Share the live feed (read-only)
+
+To let a colleague watch the byte stream — say, while they edit the PLC program —
+without giving them any access to your machine:
+
+```powershell
+serialtools tap -p COM4 -b 9600 --wiring rs485-2w --profile vici   # terminal 1
+python serve_feed.py                                               # terminal 2
+```
+
+`serve_feed.py` prints your LAN IPs; the colleague opens `http://<your-ip>:8686`
+in a browser and gets a live auto-scrolling view of the tap (ERR lines
+highlighted). It follows the newest capture dir automatically, so restarting
+the tap doesn't require a page refresh; `--capture <dir>` pins one capture
+instead. Strictly one-way: the server only tails `tap.log` and ignores all
+request input — no serial access, no file browsing. Allow the first-run
+Windows Firewall prompt (private networks). Reachability is LAN/VPN; don't
+expose the port to the internet.
 
 ## New device? Write a profile, not code
 
